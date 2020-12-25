@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Identity.UI.Services;
 
 namespace IdentityManagement.Controllers
 {
@@ -9,12 +10,15 @@ namespace IdentityManagement.Controllers
     {
         private readonly UserManager<IdentityUser> _userManager;
         private readonly SignInManager<IdentityUser> _signInManager;
+        private readonly IEmailSender _emailSender;
 
         public AccountController(UserManager<IdentityUser> userManager,
-            SignInManager<IdentityUser> signInManager)
+            SignInManager<IdentityUser> signInManager,
+            IEmailSender emailSender)
         {
             _userManager = userManager;
             _signInManager = signInManager;
+            _emailSender = emailSender;
         }
         public IActionResult Index()
         {
@@ -43,6 +47,7 @@ namespace IdentityManagement.Controllers
             var registerUser = await _userManager.CreateAsync(user, model.Password);
             if (registerUser.Succeeded)
             {
+                await _emailSender.SendEmailAsync(model.Email, "Welcome", "<h1> Welcome to our app </h2>");
                 await _signInManager.SignInAsync(user, isPersistent: false);
                 return RedirectToAction(nameof(Index), controllerName: "Home");
             }
