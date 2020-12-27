@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.AspNetCore.Identity.UI.V4.Pages.Account.Internal;
 using Microsoft.AspNetCore.Mvc;
 using System;
+using System.Security.Claims;
 using System.Threading.Tasks;
 
 namespace IdentityManagement.Controllers
@@ -49,7 +50,6 @@ namespace IdentityManagement.Controllers
             var registerUser = await _userManager.CreateAsync(user, model.Password);
             if (registerUser.Succeeded)
             {
-                await _emailSender.SendEmailAsync(model.Email, "Welcome", "<h1> Welcome to our app </h2>");
                 await _signInManager.SignInAsync(user, isPersistent: false);
                 return RedirectToAction(nameof(Index), controllerName: "Home");
             }
@@ -70,7 +70,6 @@ namespace IdentityManagement.Controllers
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> Login(LoginViewModel model)
         {
-            var returnUrl = TempData["ReturnUrl"] ?? Url.Content("~/");
             if (!ModelState.IsValid) return View(model);
 
             var user = await _userManager.FindByEmailAsync(model.Email);
@@ -135,17 +134,93 @@ namespace IdentityManagement.Controllers
             var user = await _userManager.FindByIdAsync(model.UserId);
 
             if (user == null)
-                ModelState.AddModelError(string.Empty, "Something went wrong with the reset process");
-            else
             {
-                var resetPassword = await _userManager.ResetPasswordAsync(user, model.ResetToken, model.Password);
-                if (!resetPassword.Succeeded)
-                    AddModelStateErrors(resetPassword);
+                ModelState.AddModelError(string.Empty, "Something went wrong with the reset process");
+                return View(model);
             }
 
-            return RedirectToAction(nameof(Login), "Account");
+            var resetPassword = await _userManager.ResetPasswordAsync(user, model.ResetToken, model.Password);
+            if (resetPassword.Succeeded) return RedirectToAction(nameof(Login), "Account");
+
+            AddModelStateErrors(resetPassword);
+            return View(model);
+
         }
 
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult ExternalLogin(string provider)
+        {
+            var redirectUrl = Url.Action("ExternalLoginCallback", "Account");
+            var properties = _signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl);
+
+            return Challenge(properties, provider);
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> ExternalLoginCallback(string remoteError = null)
+        {
+            if (!string.IsNullOrWhiteSpace(remoteError))
+            {
+                ModelState.AddModelError(string.Empty, remoteError);
+                return View(nameof(Login));
+            }
+
+            var externalLoginInfo = await _signInManager.GetExternalLoginInfoAsync();
+
+            if (externalLoginInfo == null) return RedirectToAction(nameof(Login), "Account");
+
+            var signInUserWithLogin = await _signInManager.ExternalLoginSignInAsync(externalLoginInfo.LoginProvider
+                , externalLoginInfo.ProviderKey, false);
+
+
+            if (!signInUserWithLogin.Succeeded)
+                return View("ExternalLoginConfirmation", new ExternalLoginConfirmation()
+                {
+                    Email = externalLoginInfo.Principal.FindFirstValue(ClaimTypes.Email),
+                    Name = externalLoginInfo.Principal.FindFirstValue(ClaimTypes.Name),
+                    ExternalProviderDisplayName = externalLoginInfo.ProviderDisplayName
+                });
+
+            await _signInManager.UpdateExternalAuthenticationTokensAsync(externalLoginInfo);
+            return RedirectToAction(nameof(Index), "Home");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> ExternalLoginConfirmation(ExternalLoginConfirmation model)
+        {
+            if (!ModelState.IsValid) return View(model);
+
+            var externalLoginInfo = await _signInManager.GetExternalLoginInfoAsync();
+
+            if (externalLoginInfo == null) return View("Error");
+
+            var applicationUser = new AppUser()
+            {
+                Email = model.Email,
+                Name = model.Name,
+                UserName = model.Email
+            };
+
+            var createdUser = await _userManager.CreateAsync(applicationUser);
+
+            if (createdUser.Succeeded)
+            {
+                var addLoginAsyncToCreatedUser = await _userManager.AddLoginAsync(applicationUser, externalLoginInfo);
+                if (addLoginAsyncToCreatedUser.Succeeded)
+                {
+                    await _signInManager.SignInAsync(applicationUser, false);
+                    await _signInManager.UpdateExternalAuthenticationTokensAsync(externalLoginInfo);
+                    return RedirectToAction(nameof(Index), "Home");
+                }
+
+            }
+
+            AddModelStateErrors(createdUser);
+
+            return View(model);
+        }
         private static string Message(string link)
         {
             var textMessage = @"You are receiving this message because you requested to change or update your email
@@ -162,5 +237,7 @@ namespace IdentityManagement.Controllers
                 ModelState.AddModelError(identityError.Code, identityError.Description);
             }
         }
+
+
     }
 }

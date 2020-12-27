@@ -29,6 +29,12 @@ namespace IdentityManagement
                 opt.UseSqlServer(Configuration.GetConnectionString("DefaultConnection"));
             });
 
+            services.AddAuthentication().AddFacebook(opt =>
+            {
+                opt.AppId = Configuration.GetValue<string>("Authentication:Facebook:AppId");
+                opt.AppSecret = Configuration.GetValue<string>("Authentication:Facebook:AppSecret");
+            });
+
             services.Configure<SmtpSettings>(Configuration.GetSection("SmtpSettings"));
             services.AddTransient<IEmailSender, SmtpEmailSender>();
 

@@ -1,5 +1,14 @@
-﻿@model LoginViewModel
+﻿@using Microsoft.AspNetCore.Identity
+@model LoginViewModel
 
+
+@inject UserManager<IdentityUser> UserManager
+@inject SignInManager<IdentityUser> SignInManager
+
+@{
+    var schemes = await SignInManager.GetExternalAuthenticationSchemesAsync();
+    var providers = schemes.ToList();
+}
 <h1>Log in</h1>
 <div class="row">
     <div class="col-md-8">
@@ -46,6 +55,31 @@
             </form>
         </section>
     </div>
+
+    @if (providers.Any())
+    {
+        <div class="col-md-4">
+            <section>
+                <h4>user another service to log in</h4>
+                <hr />
+                <form asp-action="ExternalLogin" asp-controller="Account" method="post">
+                    <div>
+                        <p>
+                            @foreach (var provider in providers)
+                            {
+                                <button class="btn btn-primary" name="provider" value="@provider.Name"
+                                        title="log in using @provider.Name">
+                                    @provider.Name
+                                </button>
+                            }
+                        </p>
+                    </div>
+
+                </form>
+            </section>
+        </div>
+    }
+
 
 </div>
 
