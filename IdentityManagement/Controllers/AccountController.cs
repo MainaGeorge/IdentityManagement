@@ -50,8 +50,8 @@ namespace IdentityManagement.Controllers
             var registerUser = await _userManager.CreateAsync(user, model.Password);
             if (registerUser.Succeeded)
             {
-                await _signInManager.SignInAsync(user, isPersistent: false);
-                return RedirectToAction(nameof(Index), controllerName: "Home");
+                await SendEmailConfirmationToken(user);
+                return RedirectToAction(nameof(Login));
             }
 
             AddModelStateErrors(registerUser);
@@ -74,7 +74,15 @@ namespace IdentityManagement.Controllers
 
             var user = await _userManager.FindByEmailAsync(model.Email);
 
-            var signIn = await _signInManager.PasswordSignInAsync(user, model.Password, model.RememberMe, false);
+            if (!user.EmailConfirmed)
+            {
+                ModelState.AddModelError("", "you must confirm your account using the link sent to you by email");
+                return View(model);
+            }
+
+
+            var signIn = await _signInManager.PasswordSignInAsync(user, model.Password,
+                model.RememberMe, false);
 
             if (signIn.Succeeded)
                 return RedirectToAction(nameof(Index), controllerName: "Home");
@@ -107,11 +115,11 @@ namespace IdentityManagement.Controllers
             var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
 
             var callbackUrl = Url.Action(nameof(ChangePassword), "Account",
-                new { userId = user.Id, resetToken }, protocol: HttpContext.Request.Scheme);
+                new { email = user.Email, resetToken }, protocol: HttpContext.Request.Scheme);
             const string subject = "Reset your password";
             var link = $"<a style=\" color: red; \" href={callbackUrl}>Reset password here </a>";
 
-            await _emailSender.SendEmailAsync(model.Email, subject, Message(link));
+            await _emailSender.SendEmailAsync(model.Email, subject, GenerateMessage("resetPassword", link));
 
             return View(nameof(ForgotPasswordConfirmation));
         }
@@ -170,8 +178,8 @@ namespace IdentityManagement.Controllers
 
             if (externalLoginInfo == null) return RedirectToAction(nameof(Login), "Account");
 
-            var signInUserWithLogin = await _signInManager.ExternalLoginSignInAsync(externalLoginInfo.LoginProvider
-                , externalLoginInfo.ProviderKey, false);
+            var signInUserWithLogin = await _signInManager.ExternalLoginSignInAsync(externalLoginInfo.LoginProvider,
+                externalLoginInfo.ProviderKey, false);
 
 
             if (!signInUserWithLogin.Succeeded)
@@ -207,8 +215,10 @@ namespace IdentityManagement.Controllers
 
             if (createdUser.Succeeded)
             {
-                var addLoginAsyncToCreatedUser = await _userManager.AddLoginAsync(applicationUser, externalLoginInfo);
-                if (addLoginAsyncToCreatedUser.Succeeded)
+                var addExternalLoginToCreatedUser = await _userManager
+                    .AddLoginAsync(applicationUser, externalLoginInfo);
+
+                if (addExternalLoginToCreatedUser.Succeeded)
                 {
                     await _signInManager.SignInAsync(applicationUser, false);
                     await _signInManager.UpdateExternalAuthenticationTokensAsync(externalLoginInfo);
@@ -221,13 +231,40 @@ namespace IdentityManagement.Controllers
 
             return View(model);
         }
-        private static string Message(string link)
-        {
-            var textMessage = @"You are receiving this message because you requested to change or update your email
-                password. If you did not make this request please contact the administration as soon as possible. Click on the link provided below to 
-                change your password." + Environment.NewLine + link;
 
-            return textMessage;
+        [HttpGet]
+        public async Task<IActionResult> ConfirmEmail(string email, string token)
+
+        {
+            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(token))
+                return View("Error");
+
+            var user = await _userManager.FindByEmailAsync(email);
+
+            if (user == null) return View("Error");
+
+            var confirmEmail = await _userManager.ConfirmEmailAsync(user, token);
+
+            if (!confirmEmail.Succeeded) return View("Error");
+
+            await _signInManager.SignInAsync(user, false);
+            return RedirectToAction(nameof(Index), "Home");
+
+        }
+        private static string GenerateMessage(string typeOfMessage, string link)
+        {
+            return typeOfMessage switch
+            {
+                "resetPassword" => @"You are receiving this message because you requested to change or update your email
+                            password. If you did not make this request please contact the administration as soon as possible. Click on the link provided below to 
+                            change your password." + Environment.NewLine + link,
+
+                "register" => @"You are receiving this message because you signed up for an account with us.
+                             Click on the link provided below to confirm and activate your account " +
+                                   Environment.NewLine + link,
+
+                _ => throw new Exception()
+            };
         }
 
         private void AddModelStateErrors(IdentityResult result)
@@ -237,6 +274,24 @@ namespace IdentityManagement.Controllers
                 ModelState.AddModelError(identityError.Code, identityError.Description);
             }
         }
+
+        private async Task SendEmailConfirmationToken(IdentityUser user)
+        {
+            var emailConfirmationToken = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+            var callbackUrl = Url.Action("ConfirmEmail", "Account",
+
+                new { email = user.Email, token = emailConfirmationToken },
+                HttpContext.Request.Scheme);
+            var confirmLink = $"<a style=\" color: red; \" href={callbackUrl}>Confirm your account</a>";
+
+            var message = GenerateMessage("register", confirmLink);
+
+            const string subject = "Account confirmation";
+
+            await _emailSender.SendEmailAsync(user.Email, subject, message);
+
+        }
+
 
 
     }
